@@ -1,18 +1,18 @@
-// TODO: add circels to field with calculated position and scaling
 // TODO: add behaviour
+// TODO: user should have ability to add several cells during MousePressed
 use bevy::{
     core_pipeline::ClearColor,
     input::mouse::MouseButtonInput,
-    math::{Vec2, Vec3},
+    math::Vec3,
     prelude::{
         default, App, Commands, Component, CoreStage, Deref, DerefMut, Entity, EventReader,
-        OrthographicCameraBundle, Plugin, Query, Res, ResMut, SystemSet, Transform,
+        OrthographicCameraBundle, Plugin, Query, Res, ResMut, SystemSet, Transform, With,
     },
     sprite::{Sprite, SpriteBundle},
     window::{WindowDescriptor, Windows},
     DefaultPlugins,
 };
-use config::{BACKGROUND_COLOR, LINES_COUNT, MAIN_COLOR, WINDOW_PADDING, WINDOW_SIZE};
+use config::{BACKGROUND_COLOR, CELL_COLOR, LINES_COUNT, MAIN_COLOR, WINDOW_PADDING, WINDOW_SIZE};
 
 mod config;
 
@@ -44,6 +44,9 @@ impl Plugin for GameSetup {
                 CoreStage::PostUpdate,
                 SystemSet::new()
                     .with_system(position_translation)
+                    .with_system(cell_translation)
+                    .with_system(cell_size_scaling)
+                    .with_system(cell_visibility)
                     .with_system(size_scaling),
             );
     }
@@ -60,9 +63,7 @@ struct Lines(Vec<Entity>);
 struct Cells(Vec<Vec<Entity>>);
 
 #[derive(Component)]
-struct CellSize {
-    radius: f32,
-}
+struct Cell {}
 
 #[derive(Component)]
 struct CellProperty {
@@ -70,7 +71,7 @@ struct CellProperty {
 }
 
 #[derive(Component)]
-struct CellCoordinate {
+struct CellCoordinates {
     x: f32,
     y: f32,
 }
@@ -181,17 +182,22 @@ fn prefill_cells(mut commands: Commands, mut cells: ResMut<Cells>) {
 
     for i in 0..LINES_COUNT as usize {
         rows.push(Vec::new());
-        for _ in 0..LINES_COUNT as usize {
+        for j in 0..LINES_COUNT as usize {
             rows[i].push(
                 commands
                     .spawn_bundle(SpriteBundle {
                         sprite: Sprite {
-                            color: MAIN_COLOR,
-                            custom_size: Some(Vec2::new(10., 10.)),
+                            color: CELL_COLOR,
                             ..default()
                         },
                         ..default()
                     })
+                    .insert(CellCoordinates {
+                        x: i as f32,
+                        y: j as f32,
+                    })
+                    .insert(CellProperty { is_active: false })
+                    .insert(Cell {})
                     .id(),
             );
         }
@@ -200,8 +206,61 @@ fn prefill_cells(mut commands: Commands, mut cells: ResMut<Cells>) {
     *cells = Cells(rows);
 }
 
+fn cell_translation(windows: Res<Windows>, mut q: Query<(&CellCoordinates, &mut Transform)>) {
+    fn convert(pos: f32, bound_window: f32, bound_game: f32) -> f32 {
+        assert!(bound_window > 0., "bound_window need to be more than 0");
+        assert!(bound_game > 0., "bound_game should be greater than 0");
+
+        let tile_size = bound_window / bound_game;
+
+        // because Sprite renders from center, we need to calculate its position
+        // in actual table.
+        // at first we calculate new position with deleting cells count by 2 and then
+        // increasing that number from position.
+        // Then we mulitply it by tile_size and add half of tile_size for centering
+        (pos - (bound_game / 2.)) * tile_size + (tile_size / 2.)
+    }
+
+    let window = windows.get_primary().unwrap();
+    let padding_size = WINDOW_PADDING * 2.;
+    assert!(padding_size > 0., "padding_size should be greater than 0");
+    for (pos, mut transform) in q.iter_mut() {
+        transform.translation = Vec3::new(
+            convert(pos.x as f32, window.width() - padding_size, LINES_COUNT),
+            convert(pos.y as f32, window.width() - padding_size, LINES_COUNT),
+            0.,
+        )
+    }
+}
+
+// Function gets every cell, calculates tile size and then decreases size by some padding
+fn cell_size_scaling(windows: Res<Windows>, mut q: Query<(&Cell, &mut Transform)>) {
+    let window = windows.get_primary().unwrap();
+    let tile_padding = 5.;
+    let padding_size = WINDOW_PADDING * 2.;
+    let tile_size = (window.width() - padding_size) / LINES_COUNT;
+    for (_, mut transform) in q.iter_mut() {
+        transform.scale = Vec3::new(tile_size - tile_padding, tile_size - tile_padding, 1.);
+    }
+}
+
+// Changes visibility of cell depends of cell active status `is_active`
+fn cell_visibility(mut q: Query<(&CellProperty, With<Cell>, &mut Sprite)>) {
+    for (prop, _, mut sprite) in q.iter_mut() {
+        if prop.is_active {
+            sprite.color = *CELL_COLOR.clone().as_rgba().set_a(1.);
+        } else {
+            sprite.color = *CELL_COLOR.clone().as_rgba().set_a(0.);
+        }
+    }
+}
+
 // ** Click Logic **
-fn click_handler(windows: Res<Windows>, mut mouse_button_event: EventReader<MouseButtonInput>) {
+fn click_handler(
+    windows: Res<Windows>,
+    mut mouse_button_event: EventReader<MouseButtonInput>,
+    mut q: Query<(&CellCoordinates, &mut CellProperty)>,
+) {
     use bevy::input::ElementState;
 
     let window = windows.get_primary().expect("error in widnows.get_primary");
@@ -223,7 +282,17 @@ fn click_handler(windows: Res<Windows>, mut mouse_button_event: EventReader<Mous
                 let y = ((cursor_position[1] - WINDOW_PADDING)
                     / ((window_width - (WINDOW_PADDING * 2.)) / LINES_COUNT))
                     .ceil();
-                println!("cursor position: {:#?}", window.cursor_position());
+
+                for (coordinates, mut prop) in q.iter_mut() {
+                    if coordinates.x == x - 1. && coordinates.y == y - 1. {
+                        if prop.is_active {
+                            prop.is_active = false;
+                        } else {
+                            prop.is_active = true;
+                        }
+                    }
+                }
+
                 println!("x, y: {:#?}, {:#?}", x, y);
             } else {
                 println!("cursor out of field");
