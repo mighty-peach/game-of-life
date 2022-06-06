@@ -300,3 +300,26 @@ fn click_handler(
         }
     }
 }
+
+// ** Behaviour **
+// TODO: I need to have global variable like start_game in order to stop/run the game. After that I can add UI
+
+// If there is more than 3 heighbours -> cell will die, if there is less than 2 neighbours -> cell will die
+// For cells at the edge I calculate neighbours from opposite edge -> I mean infinity field
+fn is_cell_will_live(
+    cells: &Cells,
+    cellCoordinates: CellCoordinates,
+    current_status: bool,
+) -> bool {
+    let mut neighbours = 0;
+
+    // check 8 neigbours
+
+    if current_status {
+        neighbours == 2 || neighbours == 3
+    } else {
+        neighbours == 3
+    }
+}
+
+// fn update_state
