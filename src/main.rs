@@ -1,5 +1,6 @@
 // TODO: add behaviour
 // TODO: user should have ability to add several cells during MousePressed
+// TODO: add docs what is going on here
 use bevy::{
     core_pipeline::ClearColor,
     input::mouse::MouseButtonInput,
@@ -20,6 +21,7 @@ fn main() {
     App::new()
         .add_plugin(GameSetup)
         .add_system(click_handler)
+        .add_system(update_state)
         .insert_resource(Cells::default())
         .run();
 }
@@ -33,6 +35,7 @@ impl Plugin for GameSetup {
                 title: "Game of Life".to_string(),
                 width: WINDOW_SIZE,
                 height: WINDOW_SIZE,
+                resizable: false,
                 ..default()
             })
             .add_startup_system(setup_camera)
@@ -59,13 +62,13 @@ fn setup_camera(mut commands: Commands) {
 #[derive(Default, Deref, DerefMut)]
 struct Lines(Vec<Entity>);
 
-#[derive(Default, Deref, DerefMut)]
+#[derive(Debug, Default, Deref, DerefMut)]
 struct Cells(Vec<Vec<Entity>>);
 
 #[derive(Component)]
 struct Cell {}
 
-#[derive(Component)]
+#[derive(Component, Debug)]
 struct CellProperty {
     is_active: bool,
 }
@@ -270,7 +273,6 @@ fn click_handler(
                 .cursor_position()
                 .expect("error of getting cursor position");
             let window_width = window.width();
-
             if cursor_position[0] > WINDOW_PADDING
                 && cursor_position[1] > WINDOW_PADDING
                 && cursor_position[0] < window_width - WINDOW_PADDING
@@ -306,20 +308,47 @@ fn click_handler(
 
 // If there is more than 3 heighbours -> cell will die, if there is less than 2 neighbours -> cell will die
 // For cells at the edge I calculate neighbours from opposite edge -> I mean infinity field
-fn is_cell_will_live(
-    cells: &Cells,
-    cellCoordinates: CellCoordinates,
-    current_status: bool,
-) -> bool {
-    let mut neighbours = 0;
+fn update_state(cells: ResMut<Cells>, mut q: Query<(&CellCoordinates, &mut CellProperty)>) {
+    for (coordinate, mut prop) in q.iter() {
+        let mut neighbours = 0;
 
-    // check 8 neigbours
+        // check 8 neigbours
+        let y_max = if coordinate.y == LINES_COUNT - 1. {
+            0.
+        } else {
+            coordinate.y + 1.
+        };
+        let y_min = if coordinate.y == 0. {
+            LINES_COUNT - 1.
+        } else {
+            coordinate.y - 1.
+        };
+        let y_range = vec![y_min as usize, coordinate.y as usize, y_max as usize];
+        let x_max = if coordinate.x == LINES_COUNT - 1. {
+            0.
+        } else {
+            coordinate.x + 1.
+        };
+        let x_min = if coordinate.x == 0. {
+            LINES_COUNT - 1.
+        } else {
+            coordinate.x - 1.
+        };
+        let x_range = vec![x_min as usize, coordinate.x as usize, x_max as usize];
 
-    if current_status {
-        neighbours == 2 || neighbours == 3
-    } else {
-        neighbours == 3
+        for i in 1..3 {
+            for j in 1..3 {
+                println!(
+                    "{:#?}",
+                    q.get_component::<CellProperty>(cells[x_range[i]][y_range[j]])
+                );
+            }
+        }
+
+        if prop.is_active {
+            // neighbours == 2 || neighbours == 3;
+        } else {
+            // neighbours == 3;
+        }
     }
 }
-
-// fn update_state
