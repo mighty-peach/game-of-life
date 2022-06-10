@@ -1,34 +1,50 @@
-// TODO: add behaviour
-// TODO: user should have ability to add several cells during MousePressed
-// TODO: add docs what is going on here
-// TODO: tests
 use bevy::{
-    core::FixedTimestep,
     core_pipeline::ClearColor,
+    hierarchy::{BuildChildren, Children},
     input::mouse::MouseButtonInput,
-    math::Vec3,
+    math::{Rect, Size, Vec3},
     prelude::{
-        default, App, Commands, Component, CoreStage, Deref, DerefMut, Entity, EventReader,
-        OrthographicCameraBundle, Plugin, Query, Res, ResMut, SystemSet, Transform, With, World,
+        default, App, AssetServer, Button, ButtonBundle, Changed, Color, Commands, Component,
+        CoreStage, Deref, DerefMut, Entity, EventReader, OrthographicCameraBundle, Plugin, Query,
+        Res, ResMut, State, SystemSet, SystemStage, TextBundle, Transform, UiCameraBundle, With,
     },
     sprite::{Sprite, SpriteBundle},
+    text::{Text, TextStyle},
+    ui::{AlignItems, Interaction, JustifyContent, Style, UiColor, Val},
     window::{WindowDescriptor, Windows},
     DefaultPlugins,
 };
-use config::{BACKGROUND_COLOR, CELL_COLOR, LINES_COUNT, MAIN_COLOR, WINDOW_PADDING, WINDOW_SIZE};
+use config::{
+    BACKGROUND_COLOR, CELL_COLOR, HOVERED_BUTTON, LINES_COUNT, MAIN_COLOR, NORMAL_BUTTON,
+    PRESSED_BUTTON, WINDOW_PADDING, WINDOW_SIZE,
+};
+use iyes_loopless::prelude::*;
+use std::time::Duration;
 
 mod config;
 
 fn main() {
+    let mut update_state_stage = SystemStage::parallel();
+    update_state_stage.add_system(update_state.run_in_bevy_state(GameState::Play));
+
     App::new()
         .add_plugin(GameSetup)
         .add_system(click_handler)
-        .add_system_set(
-            SystemSet::new()
-                .with_run_criteria(FixedTimestep::step(5.))
-                .with_system(update_state),
+        .add_stage_after(
+            CoreStage::Update,
+            "UPDATE_STATE",
+            FixedTimestepStage::new(Duration::from_millis(100)).with_stage(update_state_stage),
         )
-        .insert_resource(Cells::default())
+        .add_system(button_system)
+        .add_system_set_to_stage(
+            CoreStage::PostUpdate,
+            SystemSet::new()
+                .with_system(position_translation)
+                .with_system(cell_translation)
+                .with_system(cell_size_scaling)
+                .with_system(cell_visibility)
+                .with_system(size_scaling),
+        )
         .run();
 }
 
@@ -47,22 +63,90 @@ impl Plugin for GameSetup {
             .add_startup_system(setup_camera)
             .add_startup_system(setup_field)
             .add_startup_system(prefill_cells)
+            .add_startup_system(setup_button)
             .insert_resource(Lines::default())
-            .add_plugins(DefaultPlugins)
-            .add_system_set_to_stage(
-                CoreStage::PostUpdate,
-                SystemSet::new()
-                    .with_system(position_translation)
-                    .with_system(cell_translation)
-                    .with_system(cell_size_scaling)
-                    .with_system(cell_visibility)
-                    .with_system(size_scaling),
-            );
+            .insert_resource(Cells::default())
+            .add_state(GameState::Stop)
+            .add_plugins(DefaultPlugins);
     }
 }
 
 fn setup_camera(mut commands: Commands) {
     commands.spawn_bundle(OrthographicCameraBundle::new_2d());
+}
+
+fn setup_button(mut commands: Commands, asset_server: Res<AssetServer>) {
+    commands.spawn_bundle(UiCameraBundle::default());
+    commands
+        .spawn_bundle(ButtonBundle {
+            style: Style {
+                size: Size::new(Val::Px(150.0), Val::Px(65.0)),
+                margin: Rect {
+                    bottom: Val::Px(20.0),
+                    left: Val::Auto,
+                    top: Val::Auto,
+                    right: Val::Auto,
+                },
+                // horizontally center child text
+                justify_content: JustifyContent::Center,
+                // vertically center child text
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            color: NORMAL_BUTTON,
+            ..default()
+        })
+        .with_children(|parent| {
+            parent.spawn_bundle(TextBundle {
+                text: Text::with_section(
+                    "Start!",
+                    TextStyle {
+                        font_size: 40.0,
+                        color: Color::rgb(0.9, 0.9, 0.9),
+                        font: asset_server.load("fonts/FiraMono-Medium.ttf"),
+                    },
+                    Default::default(),
+                ),
+                ..default()
+            });
+        });
+}
+
+fn button_system(
+    mut interaction_query: Query<
+        (&Interaction, &mut UiColor, &Children),
+        (Changed<Interaction>, With<Button>),
+    >,
+    mut text_query: Query<&mut Text>,
+    mut game_state: ResMut<State<GameState>>,
+) {
+    for (interaction, mut color, children) in interaction_query.iter_mut() {
+        let mut text = text_query.get_mut(children[0]).unwrap();
+        match *interaction {
+            Interaction::Clicked => {
+                *color = PRESSED_BUTTON.into();
+                if game_state.current() == &GameState::Stop {
+                    text.sections[0].value = "Stop".to_string();
+                    game_state.set(GameState::Play).unwrap();
+                } else {
+                    text.sections[0].value = "Start".to_string();
+                    game_state.set(GameState::Stop).unwrap();
+                }
+            }
+            Interaction::Hovered => {
+                *color = HOVERED_BUTTON.into();
+            }
+            Interaction::None => {
+                *color = NORMAL_BUTTON.into();
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+enum GameState {
+    Stop,
+    Play,
 }
 
 #[derive(Default, Deref, DerefMut)]
@@ -293,11 +377,6 @@ fn click_handler(
 
                 for (coordinates, mut prop) in q.iter_mut() {
                     if coordinates.x == x - 1. && coordinates.y == y - 1. {
-                        println!(
-                            "coordinates.x == x - 1, coordinates.y == y - 1: {:#?}, {:#?}",
-                            coordinates.x, coordinates.y
-                        );
-                        println!("is_active: {}", prop.is_active);
                         if prop.is_active {
                             prop.is_active = false;
                         } else {
@@ -324,8 +403,10 @@ fn update_state(
     mut cells: ResMut<Cells>,
     q: Query<(&CellCoordinates, &mut CellProperty)>,
 ) {
+    // new array with updated state of cells
     let mut new_cells: Vec<Vec<Entity>> = Vec::new();
 
+    // prefill new state with empty data
     for i in 0..LINES_COUNT as usize {
         new_cells.push(Vec::new());
         for _ in 0..LINES_COUNT as usize {
@@ -344,8 +425,9 @@ fn update_state(
         }
     }
 
+    // Calculate count of neighbours for every cell
+    // if cell's neighbour out of field - we will check first cell from opposite edge
     for (coordinate, prop) in q.iter() {
-        println!("-----------------------------------");
         let mut neighbours = 0;
 
         let y_max = if coordinate.y == LINES_COUNT - 1. {
@@ -389,9 +471,9 @@ fn update_state(
             }
         }
 
-        println!("coor: {} {}", coordinate.x, coordinate.y);
         if prop.is_active {
             if neighbours == 2 || neighbours == 3 {
+                // alive -> alive
                 commands
                     .entity(new_cells[coordinate.x as usize][coordinate.y as usize])
                     .insert(CellCoordinates {
@@ -399,8 +481,8 @@ fn update_state(
                         y: coordinate.y as f32,
                     })
                     .insert(CellProperty { is_active: true });
-                println!("live -> live!");
             } else {
+                // alive -> die
                 commands
                     .entity(new_cells[coordinate.x as usize][coordinate.y as usize])
                     .insert(CellCoordinates {
@@ -408,10 +490,10 @@ fn update_state(
                         y: coordinate.y as f32,
                     })
                     .insert(CellProperty { is_active: false });
-                println!("live -> die!");
             }
         } else {
             if neighbours == 3 {
+                // die -> alive
                 commands
                     .entity(new_cells[coordinate.x as usize][coordinate.y as usize])
                     .insert(CellCoordinates {
@@ -419,8 +501,8 @@ fn update_state(
                         y: coordinate.y as f32,
                     })
                     .insert(CellProperty { is_active: true });
-                println!("die -> live!");
             } else {
+                // die -> die
                 commands
                     .entity(new_cells[coordinate.x as usize][coordinate.y as usize])
                     .insert(CellCoordinates {
@@ -428,16 +510,17 @@ fn update_state(
                         y: coordinate.y as f32,
                     })
                     .insert(CellProperty { is_active: false });
-                println!("die -> die!");
             }
         }
     }
 
+    // Delete previous state of cells
     for i in 0..LINES_COUNT as usize {
         for j in 0..LINES_COUNT as usize {
             commands.entity(cells[i][j]).despawn();
         }
     }
 
+    // Set new state
     *cells = Cells(new_cells);
 }
