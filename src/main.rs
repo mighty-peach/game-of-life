@@ -1,13 +1,15 @@
 // TODO: add behaviour
 // TODO: user should have ability to add several cells during MousePressed
 // TODO: add docs what is going on here
+// TODO: tests
 use bevy::{
+    core::FixedTimestep,
     core_pipeline::ClearColor,
     input::mouse::MouseButtonInput,
     math::Vec3,
     prelude::{
         default, App, Commands, Component, CoreStage, Deref, DerefMut, Entity, EventReader,
-        OrthographicCameraBundle, Plugin, Query, Res, ResMut, SystemSet, Transform, With,
+        OrthographicCameraBundle, Plugin, Query, Res, ResMut, SystemSet, Transform, With, World,
     },
     sprite::{Sprite, SpriteBundle},
     window::{WindowDescriptor, Windows},
@@ -21,7 +23,11 @@ fn main() {
     App::new()
         .add_plugin(GameSetup)
         .add_system(click_handler)
-        .add_system(update_state)
+        .add_system_set(
+            SystemSet::new()
+                .with_run_criteria(FixedTimestep::step(5.))
+                .with_system(update_state),
+        )
         .insert_resource(Cells::default())
         .run();
 }
@@ -73,7 +79,7 @@ struct CellProperty {
     is_active: bool,
 }
 
-#[derive(Component)]
+#[derive(Component, Debug)]
 struct CellCoordinates {
     x: f32,
     y: f32,
@@ -287,6 +293,11 @@ fn click_handler(
 
                 for (coordinates, mut prop) in q.iter_mut() {
                     if coordinates.x == x - 1. && coordinates.y == y - 1. {
+                        println!(
+                            "coordinates.x == x - 1, coordinates.y == y - 1: {:#?}, {:#?}",
+                            coordinates.x, coordinates.y
+                        );
+                        println!("is_active: {}", prop.is_active);
                         if prop.is_active {
                             prop.is_active = false;
                         } else {
@@ -295,7 +306,7 @@ fn click_handler(
                     }
                 }
 
-                println!("x, y: {:#?}, {:#?}", x, y);
+                println!("x, y: {:#?}, {:#?}", x - 1., y - 1.);
             } else {
                 println!("cursor out of field");
             }
@@ -308,11 +319,35 @@ fn click_handler(
 
 // If there is more than 3 heighbours -> cell will die, if there is less than 2 neighbours -> cell will die
 // For cells at the edge I calculate neighbours from opposite edge -> I mean infinity field
-fn update_state(cells: ResMut<Cells>, mut q: Query<(&CellCoordinates, &mut CellProperty)>) {
-    for (coordinate, mut prop) in q.iter() {
+fn update_state(
+    mut commands: Commands,
+    mut cells: ResMut<Cells>,
+    q: Query<(&CellCoordinates, &mut CellProperty)>,
+) {
+    let mut new_cells: Vec<Vec<Entity>> = Vec::new();
+
+    for i in 0..LINES_COUNT as usize {
+        new_cells.push(Vec::new());
+        for _ in 0..LINES_COUNT as usize {
+            new_cells[i].push(
+                commands
+                    .spawn_bundle(SpriteBundle {
+                        sprite: Sprite {
+                            color: CELL_COLOR,
+                            ..default()
+                        },
+                        ..default()
+                    })
+                    .insert(Cell {})
+                    .id(),
+            );
+        }
+    }
+
+    for (coordinate, prop) in q.iter() {
+        println!("-----------------------------------");
         let mut neighbours = 0;
 
-        // check 8 neigbours
         let y_max = if coordinate.y == LINES_COUNT - 1. {
             0.
         } else {
@@ -324,6 +359,7 @@ fn update_state(cells: ResMut<Cells>, mut q: Query<(&CellCoordinates, &mut CellP
             coordinate.y - 1.
         };
         let y_range = vec![y_min as usize, coordinate.y as usize, y_max as usize];
+
         let x_max = if coordinate.x == LINES_COUNT - 1. {
             0.
         } else {
@@ -336,19 +372,72 @@ fn update_state(cells: ResMut<Cells>, mut q: Query<(&CellCoordinates, &mut CellP
         };
         let x_range = vec![x_min as usize, coordinate.x as usize, x_max as usize];
 
-        for i in 1..3 {
-            for j in 1..3 {
-                println!(
-                    "{:#?}",
-                    q.get_component::<CellProperty>(cells[x_range[i]][y_range[j]])
-                );
+        for i in 0..3 {
+            for j in 0..3 {
+                // Current cell
+                if i == 1 && j == 1 {
+                    continue;
+                }
+
+                let neighbour_prop = q
+                    .get_component::<CellProperty>(cells[x_range[i]][y_range[j]])
+                    .expect("Error getting component");
+
+                if neighbour_prop.is_active {
+                    neighbours += 1;
+                }
             }
         }
 
+        println!("coor: {} {}", coordinate.x, coordinate.y);
         if prop.is_active {
-            // neighbours == 2 || neighbours == 3;
+            if neighbours == 2 || neighbours == 3 {
+                commands
+                    .entity(new_cells[coordinate.x as usize][coordinate.y as usize])
+                    .insert(CellCoordinates {
+                        x: coordinate.x as f32,
+                        y: coordinate.y as f32,
+                    })
+                    .insert(CellProperty { is_active: true });
+                println!("live -> live!");
+            } else {
+                commands
+                    .entity(new_cells[coordinate.x as usize][coordinate.y as usize])
+                    .insert(CellCoordinates {
+                        x: coordinate.x as f32,
+                        y: coordinate.y as f32,
+                    })
+                    .insert(CellProperty { is_active: false });
+                println!("live -> die!");
+            }
         } else {
-            // neighbours == 3;
+            if neighbours == 3 {
+                commands
+                    .entity(new_cells[coordinate.x as usize][coordinate.y as usize])
+                    .insert(CellCoordinates {
+                        x: coordinate.x as f32,
+                        y: coordinate.y as f32,
+                    })
+                    .insert(CellProperty { is_active: true });
+                println!("die -> live!");
+            } else {
+                commands
+                    .entity(new_cells[coordinate.x as usize][coordinate.y as usize])
+                    .insert(CellCoordinates {
+                        x: coordinate.x as f32,
+                        y: coordinate.y as f32,
+                    })
+                    .insert(CellProperty { is_active: false });
+                println!("die -> die!");
+            }
         }
     }
+
+    for i in 0..LINES_COUNT as usize {
+        for j in 0..LINES_COUNT as usize {
+            commands.entity(cells[i][j]).despawn();
+        }
+    }
+
+    *cells = Cells(new_cells);
 }
